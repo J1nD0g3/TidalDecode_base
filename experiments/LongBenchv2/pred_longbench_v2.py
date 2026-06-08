@@ -188,8 +188,8 @@ def parse_args():
     parser.add_argument("--sparse_layer_start", type=int, default=2)
     parser.add_argument("--keep_ratio", type=float, default=None,
                         help="overall KV keep ratio to match across methods (e.g. 0.27). Overrides top_k; converts to per-sparse-layer ratio accounting for full layers.")
-    parser.add_argument("--correction_layer", type=int, default=17,
-                        help="token re-selection layer (Qwen3-14B has 40 layers)")
+    parser.add_argument("--correction_layer", type=int, default=21,
+                        help="token re-selection layer (Qwen3-14B profiled: L21)")
     parser.add_argument("--enable_thinking", action="store_true", default=False,
                         help="Enable Qwen3 thinking mode")
     parser.add_argument("--datalen", type=int, default=32768,

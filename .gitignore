@@ -135,7 +135,7 @@ attn_plot/
 data/
 needle/
 results/
-experiments/LongBench/pred/
-experiments/LongBench/pred_e/
-experiments/LongBench/longbench_logs/experiments/LongBenchv2/pred/
+experiments/LongBenchv2/pred/
+experiments/LongBenchv2/pred_e/
+experiments/LongBenchv2/longbench_logs/experiments/LongBenchv2/pred/
 experiments/InfiniteBench/pred/

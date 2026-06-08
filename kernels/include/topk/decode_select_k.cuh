@@ -22,7 +22,7 @@ using namespace raft::matrix::detail::select::radix::impl;
    * \param out_idx [batch_size, k] output index
    * \param greater whether to select top-k or bottom-k
    */
-template <typename T, typename IdxT, int batch_size>
+template <typename T, typename IdxT>
 void decode_select_k(const T* in,
 					 const IdxT* in_idx,
                 char* bufs,
@@ -30,6 +30,7 @@ void decode_select_k(const T* in,
 					 IdxT k,
 					 T* out,
 					 IdxT* out_idx,
+					 int batch_size,
 					 bool greater = true,
 					 raft::matrix::SelectAlgo _algo = raft::matrix::SelectAlgo::kRadix8bits) {
    // Parameters from kRadix8Bits

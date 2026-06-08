@@ -16,6 +16,75 @@ from transformers.models.llama.modeling_llama import (
 import tidal.utils
 
 
+class QKRMSNorm(nn.Module):
+    """Per-head RMSNorm on the head_dim axis (Qwen3 q_norm/k_norm).
+
+    Numerically identical to HF Qwen3RMSNorm: variance computed in fp32, then cast back.
+    """
+
+    def __init__(self, head_dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(head_dim))
+        self.variance_epsilon = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        input_dtype = x.dtype
+        x = x.to(torch.float32)
+        variance = x.pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.variance_epsilon)
+        return (self.weight * x.to(input_dtype))
+
+
+def _compute_yarn_parameters_qwen3(config, device):
+    """YaRN inv_freq + attention scaling matching modern transformers (>=4.51) and the
+    in-repo eager path (src/models/qwen3_tidaldecoding.py), which the kernel path must
+    reproduce exactly. transformers 4.45.1's built-in yarn ignores
+    original_max_position_embeddings, so we recompute it here."""
+    import math
+    base = config.rope_theta
+    partial_rotary_factor = getattr(config, "partial_rotary_factor", 1.0)
+    head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+    dim = int(head_dim * partial_rotary_factor)
+    rope_scaling = config.rope_scaling
+    factor = rope_scaling["factor"]
+    original_max = rope_scaling.get("original_max_position_embeddings")
+    if original_max is not None:
+        max_position_embeddings = original_max
+        factor = config.max_position_embeddings / original_max
+    else:
+        max_position_embeddings = config.max_position_embeddings
+    attention_factor = rope_scaling.get("attention_factor")
+    if attention_factor is None:
+        attention_factor = 0.1 * math.log(factor) + 1.0
+    beta_fast = rope_scaling.get("beta_fast") or 32
+    beta_slow = rope_scaling.get("beta_slow") or 1
+
+    def find_correction_dim(num_rotations, dim, base, max_pos):
+        return (dim * math.log(max_pos / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+    def find_correction_range(low_rot, high_rot, dim, base, max_pos):
+        low = math.floor(find_correction_dim(low_rot, dim, base, max_pos))
+        high = math.ceil(find_correction_dim(high_rot, dim, base, max_pos))
+        return max(low, 0), min(high, dim - 1)
+
+    def linear_ramp_factor(mn, mx, dim):
+        if mn == mx:
+            mx += 0.001
+        linear_func = (torch.arange(dim, dtype=torch.float32) - mn) / (mx - mn)
+        return torch.clamp(linear_func, 0, 1)
+
+    pos_freqs = base ** (torch.arange(0, dim, 2).float().to(device) / dim)
+    inv_freq_extrapolation = 1.0 / pos_freqs
+    inv_freq_interpolation = 1.0 / (factor * pos_freqs)
+    low, high = find_correction_range(beta_fast, beta_slow, dim, base, max_position_embeddings)
+    inv_freq_extrapolation_factor = 1 - linear_ramp_factor(low, high, dim // 2).float().to(device)
+    inv_freq = (
+        inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
+        + inv_freq_extrapolation * inv_freq_extrapolation_factor
+    )
+    return inv_freq, attention_factor
+
+
 class TDAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -53,6 +122,15 @@ class TDAttention(nn.Module):
         self.o_proj = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
+
+        # Qwen3 per-head QK normalization (applied after projection, before RoPE).
+        # Triggered by config; Llama models leave this off so their path is unchanged.
+        self.qk_norm = bool(getattr(config, "qk_norm", False)) or \
+            getattr(config, "model_type", "") == "qwen3"
+        if self.qk_norm:
+            self.q_norm = QKRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+            self.k_norm = QKRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+
         self._init_rope()
 
     def _init_rope(self):
@@ -65,19 +143,28 @@ class TDAttention(nn.Module):
             self.rope_scale = 1.0
             self.rope_type = "llama2"
         else:
-            if rope_scaling is not None:
-                if "type" in rope_scaling:
-                    rope_type = rope_scaling["type"]
-                elif "rope_type" in rope_scaling:
-                    rope_type = rope_scaling["rope_type"]
-                else:
-                    raise ValueError(
-                        "rope_scaling must have a 'type' or 'rope_type' key.")
-                assert rope_type in ["llama3"]
-                self.rope_type = rope_type
-                self.rope_config = rope_scaling
-                self.rope_scale = rope_scaling["factor"]
-                self.rope_theta = getattr(self.config, "rope_theta", None)
+            if "type" in rope_scaling:
+                rope_type = rope_scaling["type"]
+            elif "rope_type" in rope_scaling:
+                rope_type = rope_scaling["rope_type"]
+            else:
+                raise ValueError(
+                    "rope_scaling must have a 'type' or 'rope_type' key.")
+            assert rope_type in ["llama3", "yarn"], f"unsupported rope_type {rope_type}"
+            self.rope_type = rope_type
+            self.rope_config = rope_scaling
+            self.rope_scale = rope_scaling["factor"]
+            self.rope_theta = getattr(self.config, "rope_theta", None)
+            if rope_type == "yarn":
+                # RoPE is applied in PyTorch via self.rotary_emb (forward() uses the
+                # torch path). Override its inv_freq/scaling with the corrected YaRN so
+                # cos/sin match the verified eager implementation exactly.
+                inv_freq, attn_scaling = _compute_yarn_parameters_qwen3(
+                    self.config, device=self.rotary_emb.inv_freq.device
+                )
+                self.rotary_emb.inv_freq = inv_freq.to(self.rotary_emb.inv_freq.dtype)
+                self.rotary_emb.original_inv_freq = self.rotary_emb.inv_freq
+                self.rotary_emb.attention_scaling = attn_scaling
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return (
@@ -153,6 +240,11 @@ class TDAttention(nn.Module):
                 bsz, q_len, self.num_key_value_heads, self.head_dim
             ).transpose(1, 2)
 
+            # Qwen3 QK-norm: per-head RMSNorm over head_dim, after projection, before RoPE.
+            if self.qk_norm:
+                query_states = self.q_norm(query_states)
+                key_states = self.k_norm(key_states)
+
             if iController.kv_cache.seqlen - q_len > 0:
                 position_ids[0, 0] = iController.kv_cache.seqlen - q_len
 
@@ -206,11 +298,30 @@ class TDAttention(nn.Module):
         if q_len > 1:
             torch.cuda.nvtx.range_push("prefill_attn")
             torch.cuda.synchronize()
-            attn_output = tidal.utils.prefill_forward(
-                query_states,
-                iController,
-                self.layer_idx,
-            )
+            if self.num_key_value_groups != 1 and self.num_key_value_groups % 4 != 0:
+                # The paged prefill kernel requires GQA group_size == 1 or % 4 == 0
+                # (tiling constraint). Qwen3-14B has group 5, so compute the one-time
+                # full causal prefill via SDPA instead. KV is already appended to the
+                # paged cache above, so decode is unaffected.
+                # states here are [q_len, heads, head_dim].
+                q = query_states.transpose(0, 1).unsqueeze(0).contiguous()  # [1, nqo, q_len, hd]
+                k = key_states.transpose(0, 1).unsqueeze(0)                 # [1, nkv, q_len, hd]
+                v = value_states.transpose(0, 1).unsqueeze(0)
+                k = repeat_kv(k, self.num_key_value_groups).contiguous()    # [1, nqo, q_len, hd]
+                v = repeat_kv(v, self.num_key_value_groups).contiguous()
+                # Force the memory-efficient/flash SDPA backend; the math backend would
+                # materialize the full [q_len, q_len] score matrix (OOM at 128k).
+                with torch.backends.cuda.sdp_kernel(enable_flash=True,
+                                                    enable_mem_efficient=True,
+                                                    enable_math=False):
+                    attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+                attn_output = attn_output.squeeze(0).transpose(0, 1).contiguous()  # [q_len, nqo, hd]
+            else:
+                attn_output = tidal.utils.prefill_forward(
+                    query_states,
+                    iController,
+                    self.layer_idx,
+                )
             torch.cuda.synchronize()
             torch.cuda.nvtx.range_pop()
         else:

@@ -349,14 +349,25 @@ class LlamaModel(LlamaPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
+        # Token-selection layer schedule. Defaults reproduce the original Llama setup
+        # (selection layer 2, re-selection/correction layer 13). Models can override via
+        # config (e.g. Qwen3-14B profiling -> correction layer 21).
+        S = getattr(config, "tidal_sparse_layer_start", 2)
+        C = getattr(config, "tidal_correction_layer", 13)
+        self._sparse_layer_start = S
+        self._correction_layer = C
+        assert 0 < S < C < config.num_hidden_layers, (
+            f"invalid tidal schedule: sparse_layer_start={S}, correction_layer={C}, "
+            f"num_layers={config.num_hidden_layers}"
+        )
         layers = (
-            [LlamaDecoderLayer(config, i, "full") for i in range(2)]
-            + [LlamaDecoderLayer(config, 2, "search")]
-            + [LlamaDecoderLayer(config, i, "sparse") for i in range(3, 13)]
-            + [LlamaDecoderLayer(config, 13, "search")]
+            [LlamaDecoderLayer(config, i, "full") for i in range(S)]        # dense prefix
+            + [LlamaDecoderLayer(config, S, "search")]                      # selection layer
+            + [LlamaDecoderLayer(config, i, "sparse") for i in range(S + 1, C)]
+            + [LlamaDecoderLayer(config, C, "search")]                      # correction layer
             + [
                 LlamaDecoderLayer(config, i, "sparse")
-                for i in range(14, config.num_hidden_layers)
+                for i in range(C + 1, config.num_hidden_layers)
             ]
         )
         self.layers = nn.ModuleList(layers)
@@ -506,16 +517,21 @@ class LlamaModel(LlamaPreTrainedModel):
         self.iController.set_token_budget(self._tidal_max_page_limit)
         self.iController.begin_forward(seq_length)
 
+        # Budget schedule (generalizes the original idx==3/13/14 logic):
+        #   layers [0..S] and [C] use FULL budget (dense prefix + the two selection layers);
+        #   layers [S+1..C-1] and [C+1..] use the sparse token budget.
+        S = self._sparse_layer_start
+        C = self._correction_layer
         for idx, decoder_layer in enumerate(self.layers):
-            if idx == 3:
+            if idx == S + 1:
                 self.iController.end_forward()
                 self.iController.set_token_budget(self._tidal_token_budget)
                 self.iController.begin_forward(seq_length, updateTensor=(idx == 0))
-            if idx == 13:
+            if idx == C:
                 self.iController.end_forward()
                 self.iController.set_token_budget(self._tidal_max_page_limit)
                 self.iController.begin_forward(seq_length, updateTensor=(idx == 0))
-            if idx == 14:
+            if idx == C + 1:
                 self.iController.end_forward()
                 self.iController.set_token_budget(self._tidal_token_budget)
                 self.iController.begin_forward(seq_length, updateTensor=(idx == 0))
@@ -747,6 +763,12 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         )
         torch.cuda.nvtx.range_push("lm_head")
         hidden_states = outputs[0]
+        # Generation only needs the last position's logits. Computing logits for ALL
+        # prefill positions (q_len x vocab x fp32) OOMs at long context
+        # (e.g. 114k x 152k x 4B = ~69 GB), so keep only the last position unless
+        # labels are provided (training/scoring needs all positions).
+        if labels is None and hidden_states.size(1) > 1:
+            hidden_states = hidden_states[:, -1:, :]
         if self.pretraining_tp > 1:
             lm_head_slices = self.lm_head.weight.split(
                 self.vocab_size // self.pretraining_tp, dim=0

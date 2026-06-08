@@ -616,7 +616,7 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 										  const uint32_t page_size,
 										  const RotaryMode rotary_mode = RotaryMode::kNone,
 										  cudaStream_t stream = nullptr) {
-	SWITCH_GQA_GROUP_SIZE(
+	SWITCH_GQA_GROUP_SIZE_DEC(
 		num_qo_heads / num_kv_heads,
 		GROUP_SIZE,
 		{SWITCH_HEAD_DIM(
@@ -938,7 +938,7 @@ BatchDecodeWithPagedKVCache(DTypeIn* q,
 		throw std::invalid_argument(err_msg.str());
 	}
 
-	SWITCH_GQA_GROUP_SIZE(
+	SWITCH_GQA_GROUP_SIZE_DEC(
 		num_qo_heads / num_kv_heads,
 		GROUP_SIZE,
 		{SWITCH_HEAD_DIM(

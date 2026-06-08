@@ -54,10 +54,15 @@ endfunction()
 # Change pinned tag here to test a commit in CI
 # To use a different RAFT locally, set the CMake variable
 # CPM_raft_SOURCE=/path/to/local/raft
+# TidalDecode only uses raft's header-only radix select_k
+# (raft/matrix/detail/select_k-inl.cuh). Building the full compiled raft library
+# (CAGRA/distance/neighbors) is unnecessary AND fails on CUDA 12.8 due to the new
+# -static-global-template-stub warning promoted to error by raft's -Werror build.
+# Header-only (COMPILE_LIBRARY OFF) skips all of that.
 find_and_configure_raft(VERSION  ${RAFT_VERSION}.00
         FORK                     ${RAFT_FORK}
         PINNED_TAG               ${RAFT_PINNED_TAG}
-        COMPILE_LIBRARY          ON
+        COMPILE_LIBRARY          OFF
         ENABLE_MNMG_DEPENDENCIES OFF
         ENABLE_NVTX              OFF
 )

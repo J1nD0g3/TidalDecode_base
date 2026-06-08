@@ -30,13 +30,14 @@ void bench_decode_select_k(nvbench::state& state) {
 	thrust::device_vector<char> buf(buf_size_bytes);
 
 	state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-		decode_select_k<d_type, idx_type, num_heads>(thrust::raw_pointer_cast(d_in.data()),
+		decode_select_k<d_type, idx_type>(thrust::raw_pointer_cast(d_in.data()),
 													 thrust::raw_pointer_cast(d_in_idx.data()),
 													 thrust::raw_pointer_cast(buf.data()),
 													 seq_len,
 													 k,
 													 thrust::raw_pointer_cast(d_out.data()),
 													 thrust::raw_pointer_cast(d_out_idx.data()),
+													 num_heads,
 													 true,
 													 _algo);
 	});

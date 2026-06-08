@@ -5,7 +5,7 @@ set(CMAKE_CXX_COMPILER "/usr/bin/g++")
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_ARCHITECTURES 89)
+set(CMAKE_CUDA_ARCHITECTURES 80)
 
 # ------------- configure rapids-cmake --------------#
 include(${CMAKE_SOURCE_DIR}/cmake/fetch_rapids.cmake)
@@ -38,5 +38,5 @@ target_compile_definitions(_kernels PRIVATE -DBSK_TORCH_CHECK) # Enable Torch Te
 target_include_directories(_kernels PRIVATE ${CMAKE_SOURCE_DIR}/../../kernels/include)
 target_include_directories(_kernels PRIVATE ${CMAKE_SOURCE_DIR}/../../kernels/3rdparty/flashinfer/include)
 target_include_directories(_kernels PRIVATE ${CMAKE_SOURCE_DIR}/../../kernels/3rdparty/pybind/include)
-target_compile_options(_kernels PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr>)
+target_compile_options(_kernels PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr -static-global-template-stub=false>)
 target_link_libraries(_kernels PRIVATE ${TORCH_LIBRARIES} raft::raft Python::Python pybind11::module ${TORCH_PYTHON_LIBRARY})

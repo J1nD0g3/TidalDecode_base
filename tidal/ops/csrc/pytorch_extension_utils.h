@@ -21,12 +21,18 @@
 
 #pragma once
 #include <torch/extension.h>
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
 
 #define DISPATCH_PYTORCH_DTYPE_TO_CTYPE(pytorch_dtype, c_type, ...) \
 	[&]() -> bool {                                                 \
 		switch(pytorch_dtype) {                                     \
 		case at::ScalarType::Half: {                                \
 			using c_type = nv_half;                                 \
+			return __VA_ARGS__();                                   \
+		}                                                           \
+		case at::ScalarType::BFloat16: {                            \
+			using c_type = nv_bfloat16;                             \
 			return __VA_ARGS__();                                   \
 		}                                                           \
 		default:                                                    \
