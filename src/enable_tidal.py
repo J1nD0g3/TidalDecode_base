@@ -3,7 +3,12 @@ def enable_tidal(model, attn_type="tidal", top_k=256, sparse_layer_start=2, corr
     print(f"token budget: {top_k}")
     print(f"sparse layer starts from: Layer {sparse_layer_start}")
     print(f"reselection layer: {correction_layer}")
-    if "llama" in model_type:
+    if "qwen3" in model_type:
+        from src.tidal_build.modify_qwen3 import (
+            enable_qwen3_tidal_attention,
+        )
+        enable_qwen3_tidal_attention(model, top_k, attn_type, sparse_layer_start, correction_layer)
+    elif "llama" in model_type:
         # currently support llama family
         from src.tidal_build.modify_llama import (
             enable_llama_tidal_attention,

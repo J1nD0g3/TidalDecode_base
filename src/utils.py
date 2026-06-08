@@ -34,11 +34,49 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def _get_model_type(model_name_or_path):
+    """Read model_type from the model's config.json (avoids AutoConfig, which
+    does not know qwen3 on transformers==4.45.1)."""
+    config_path = osp.join(model_name_or_path, "config.json")
+    if osp.exists(config_path):
+        with open(config_path, "r") as f:
+            return json.load(f).get("model_type", "")
+    # fall back to name matching for hub ids
+    return "qwen3" if "qwen3" in model_name_or_path.lower() else ""
+
+
 def load(model_name_or_path, attn_type, device, **kwargs):
     print(f"Loading model from {model_name_or_path} ...")
-    
-    if attn_type=="tidal":
-        
+
+    is_qwen3 = "qwen3" in _get_model_type(model_name_or_path)
+
+    if is_qwen3:
+        # Qwen3 is loaded through the in-repo implementation for both tidal and
+        # full modes (AutoModelForCausalLM cannot load qwen3 on transformers 4.45.1)
+        from transformers import (
+            AutoTokenizer,
+        )
+        from src.models.qwen3_tidaldecoding import (
+            Qwen3ForCausalLM,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name_or_path,
+            trust_remote_code=True,
+        )
+        model = Qwen3ForCausalLM.from_pretrained(
+            model_name_or_path,
+            device_map=device,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+        model.config.model_type = "qwen3"  # LlamaConfig is reused; make routing explicit
+        if attn_type == "tidal":
+            print("TidalDecode enabled!")
+            enable_tidal(model, attn_type, **kwargs)
+        else:
+            print("full-weight attention enabled")
+    elif attn_type=="tidal":
+
         print("TidalDecode enabled!")
         from transformers import (
             AutoTokenizer,

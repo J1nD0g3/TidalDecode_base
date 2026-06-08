@@ -137,4 +137,5 @@ needle/
 results/
 experiments/LongBench/pred/
 experiments/LongBench/pred_e/
-experiments/LongBench/longbench_logs/
+experiments/LongBench/longbench_logs/experiments/LongBenchv2/pred/
+experiments/InfiniteBench/pred/

@@ -1,0 +1,26 @@
+{
+  "run": "longbenchv2-tidal-4096-c17-think_off",
+  "model": "Qwen3-14B",
+  "samples": 2,
+  "accuracy": 0.0,
+  "by_difficulty": {
+    "easy": {
+      "n": 1,
+      "acc": 0.0
+    },
+    "hard": {
+      "n": 1,
+      "acc": 0.0
+    }
+  },
+  "by_length": {
+    "long": {
+      "n": 1,
+      "acc": 0.0
+    },
+    "short": {
+      "n": 1,
+      "acc": 0.0
+    }
+  }
+}
