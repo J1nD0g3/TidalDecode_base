@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
     model_short = os.path.basename(args.model.rstrip("/"))
     think_tag = "think_on" if args.enable_thinking else "think_off"
-    run_name = f"longbenchv2-kernel-r{args.keep_ratio}-c{args.correction_layer}-{think_tag}"
+    run_name = f"longbenchv2_tidaldecode_{think_tag}_r{args.keep_ratio}"
     out_dir = args.out_dir or os.path.join(HERE, "pred", model_short)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{run_name}.jsonl")

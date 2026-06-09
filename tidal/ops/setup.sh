@@ -1,7 +1,9 @@
 mkdir -p build
 cd build
 
-cmake -DCMAKE_PREFIX_PATH=`python -c 'import torch;print(torch.utils.cmake_prefix_path)'` -GNinja ..
+cmake -DCMAKE_PREFIX_PATH=`python -c 'import torch;print(torch.utils.cmake_prefix_path)'` \
+      -DCPM_DOWNLOAD_ALL=ON -DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON \
+      -DCPM_SOURCE_CACHE=/workspace/.cpm_cache -GNinja ..
 ninja
 
 echo "Compilation Finish"
